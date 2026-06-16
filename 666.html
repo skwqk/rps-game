@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>技能版剪刀石頭布</title>
+    <style>
+        body { font-family: "Microsoft JhengHei", Arial, sans-serif; background-color: #222; color: #fff; text-align: center; }
+        .container { max-width: 800px; margin: 50px auto; background: #333; padding: 20px; border-radius: 10px; box-shadow: 0 0 15px rgba(0,0,0,0.5); }
+        .battle-arena { display: flex; justify-content: space-between; margin-bottom: 20px; padding: 20px; background: #444; border-radius: 8px; }
+        .character { width: 45%; }
+        .hp-bar-bg { background: #555; width: 100%; height: 25px; border-radius: 12px; overflow: hidden; margin-top: 10px; border: 2px solid #111; }
+        .hp-bar-fill { background: #4caf50; height: 100%; width: 100%; transition: width 0.3s ease, background-color 0.3s ease; }
+        .enemy-hp-fill { background: #f44336; }
+        .controls { margin-top: 20px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+        button { font-size: 18px; padding: 10px 20px; cursor: pointer; border: none; border-radius: 5px; background: #2196f3; color: white; transition: background 0.2s; }
+        button:hover:not(:disabled) { background: #0b7dda; }
+        button:disabled { background: #555; color: #999; cursor: not-allowed; }
+        .skill-btn { background: #9c27b0; }
+        .skill-btn:hover:not(:disabled) { background: #7b1fa2; }
+        .restart-btn { background: #ff9800; display: none; width: 100%; margin-top: 10px; font-weight: bold; }
+        .restart-btn:hover { background: #e68a00; }
+        #log { background: #111; padding: 15px; border-radius: 5px; height: 180px; overflow-y: auto; text-align: left; font-size: 16px; margin-top: 20px; }
+        .log-entry { margin-bottom: 5px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .win-text { color: #4caf50; }
+        .lose-text { color: #f44336; }
+        .skill-text { color: #e040fb; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1 id="stage-title">第一關</h1>
+    
+    <div class="battle-arena">
+        <div class="character">
+            <h2>玩家 (英雄)</h2>
+            <div>HP: <span id="player-hp-text">100</span> / <span id="player-max-hp">100</span></div>
+            <div class="hp-bar-bg"><div id="player-hp-bar" class="hp-bar-fill"></div></div>
+        </div>
+        
+        <div class="character">
+            <h2 id="enemy-name">敵人</h2>
+            <div>HP: <span id="enemy-hp-text">50</span> / <span id="enemy-max-hp">50</span></div>
+            <div class="hp-bar-bg"><div id="enemy-hp-bar" class="hp-bar-fill enemy-hp-fill"></div></div>
+        </div>
+    </div>
+
+    <div class="controls" id="controls">
+        <button class="action-btn" onclick="playRound(1)">✌️ 剪刀</button>
+        <button class="action-btn" onclick="playRound(2)">✊ 石頭</button>
+        <button class="action-btn" onclick="playRound(3)">🖐️ 布</button>
+        <button class="skill-btn" id="btn-heal" onclick="useHealSkill()">💖 回血 (CD: 0)</button>
+    </div>
+    <button id="btn-restart" class="restart-btn" onclick="resetGame()">🔄 重新開始</button>
+
+    <div id="log"></div>
+</div>
+
+<script>
+    // 遊戲狀態與數值
+    let stage = 1;
+    let player = { hp: 100, maxHp: 100, dmg: 20 };
+    let enemy = { name: "史萊姆", hp: 50, maxHp: 50, dmg: 10, weights: [33, 33, 34] };
+    let healCooldown = 0; // 技能冷卻回合數
+    const HEAL_AMOUNT = 40; // 技能回血量
+    const MAX_COOLDOWN = 3; // 技能施放後需等待的回合數
+
+    const moveNames = { 1: "剪刀", 2: "石頭", 3: "布" };
+
+    // 初始化與更新 UI
+    function updateUI() {
+        document.getElementById('stage-title').innerText = `第 ${stage} 關`;
+        document.getElementById('enemy-name').innerText = enemy.name;
+        
+        // 確保 HP 顯示不會低於 0
+        player.hp = Math.max(0, player.hp);
+        enemy.hp = Math.max(0, enemy.hp);
+
+        document.getElementById('player-hp-text').innerText = player.hp;
+        document.getElementById('player-max-hp').innerText = player.maxHp;
+        document.getElementById('player-hp-bar').style.width = (player.hp / player.maxHp) * 100 + '%';
+
+        document.getElementById('enemy-hp-text').innerText = enemy.hp;
+        document.getElementById('enemy-max-hp').innerText = enemy.maxHp;
+        document.getElementById('enemy-hp-bar').style.width = (enemy.hp / enemy.maxHp) * 100 + '%';
+
+        // 更新技能按鈕狀態
+        const healBtn = document.getElementById('btn-heal');
+        if (healCooldown > 0) {
+            healBtn.innerText = `⏳ 回血 (CD: ${healCooldown})`;
+            healBtn.disabled = true;
+        } else {
+            healBtn.innerText = `💖 回血`;
+            healBtn.disabled = false;
+        }
+    }
+
+    function logMessage(msg, type = '') {
+        const logDiv = document.getElementById('log');
+        const entry = document.createElement('div');
+        entry.className = `log-entry ${type}`;
+        entry.innerHTML = msg;
+        logDiv.appendChild(entry);
+        logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function getEnemyMove() {
+        let total = enemy.weights[0] + enemy.weights[1] + enemy.weights[2];
+        let rand = Math.floor(Math.random() * total);
+        if (rand < enemy.weights[0]) return 1;
+        if (rand < enemy.weights[0] + enemy.weights[1]) return 2;
+        return 3;
+    }
+
+    // 回血技能邏輯
+    function useHealSkill() {
+        if (player.hp <= 0 || enemy.hp <= 0) return;
+        if (healCooldown > 0) return;
+
+        // 玩家補血
+        player.hp = Math.min(player.maxHp, player.hp + HEAL_AMOUNT);
+        healCooldown = MAX_COOLDOWN; // 進入冷卻
+
+        // 敵人同回合發動攻擊
+        let enemyMove = getEnemyMove();
+        let eName = moveNames[enemyMove];
+        player.hp -= enemy.dmg;
+
+        logMessage(`你使用了技能，恢復了 ${HEAL_AMOUNT} 點 HP！`, 'skill-text');
+        logMessage(`敵人趁機攻擊，出了 [${eName}]，你受到 ${enemy.dmg} 點傷害。`, 'lose-text');
+
+        checkGameState();
+        updateUI();
+    }
+
+    // 一般回合結算邏輯
+    function playRound(playerMove) {
+        if (player.hp <= 0 || enemy.hp <= 0) return;
+
+        // 遞減技能冷卻時間
+        if (healCooldown > 0) healCooldown--;
+
+        let enemyMove = getEnemyMove();
+        let pName = moveNames[playerMove];
+        let eName = moveNames[enemyMove];
+
+        let resultMsg = `你出了 [${pName}]，敵人出了 [${eName}]。`;
+        let resultType = '';
+
+        if (playerMove === enemyMove) {
+            resultMsg += " 平手！雙方無損。";
+        } else if (
+            (playerMove === 1 && enemyMove === 3) ||
+            (playerMove === 2 && enemyMove === 1) ||
+            (playerMove === 3 && enemyMove === 2)
+        ) {
+            enemy.hp -= player.dmg;
+            resultMsg += ` 你贏了！敵人受到 ${player.dmg} 點傷害。`;
+            resultType = 'win-text';
+        } else {
+            player.hp -= enemy.dmg;
+            resultMsg += ` 你輸了！受到 ${enemy.dmg} 點傷害。`;
+            resultType = 'lose-text';
+        }
+
+        logMessage(resultMsg, resultType);
+        checkGameState();
+        updateUI();
+    }
+
+    // 檢查關卡狀態與生死
+    function checkGameState() {
+        if (player.hp <= 0) {
+            player.hp = 0;
+            logMessage(`<b>你倒下了... 遊戲結束。總共抵達第 ${stage} 關。</b>`, 'lose-text');
+            disableControls();
+            document.getElementById('btn-restart').style.display = 'block'; // 顯示重新開始按鈕
+        } else if (enemy.hp <= 0) {
+            enemy.hp = 0;
+            logMessage(`<b>你擊敗了 ${enemy.name}！進入下一關，回復 30 點 HP。</b>`, 'win-text');
+            nextStage();
+        }
+    }
+
+    function nextStage() {
+        stage++;
+        player.hp = Math.min(player.maxHp, player.hp + 30);
+        
+        enemy.maxHp = 50 + (stage * 20);
+        enemy.hp = enemy.maxHp;
+        enemy.dmg = 10 + (stage * 5);
+
+        if (stage % 3 === 1) {
+            enemy.name = "Faker";
+            enemy.weights = [33, 33, 34];
+        } else if (stage % 3 === 2) {
+            enemy.name = "捷運殺手";
+            enemy.weights = [70, 15, 15];
+        } else {
+            enemy.name = "海底撈月";
+            enemy.weights = [15, 70, 15];
+        }
+
+        logMessage(`--- 遭遇新敵人：${enemy.name} ---`);
+    }
+
+    function disableControls() {
+        const buttons = document.querySelectorAll('.action-btn, .skill-btn');
+        buttons.forEach(btn => btn.disabled = true);
+    }
+
+    function enableControls() {
+        const buttons = document.querySelectorAll('.action-btn');
+        buttons.forEach(btn => btn.disabled = false);
+        // 技能按鈕的啟用狀態交由 updateUI 判定冷卻時間處理
+    }
+
+    // 重新開始遊戲邏輯
+    function resetGame() {
+        stage = 1;
+        player.hp = player.maxHp;
+        healCooldown = 0;
+        
+        enemy.name = "史萊姆";
+        enemy.maxHp = 50;
+        enemy.hp = 50;
+        enemy.dmg = 10;
+        enemy.weights = [33, 33, 34];
+
+        document.getElementById('log').innerHTML = ''; // 清空戰鬥日誌
+        document.getElementById('btn-restart').style.display = 'none'; // 隱藏按鈕
+        
+        enableControls();
+        logMessage("<b>遊戲已重新開始！請選擇行動。</b>");
+        updateUI();
+    }
+
+    // 初始啟動
+    logMessage("<b>遊戲開始！請選擇行動。</b>");
+    updateUI();
+</script>
+</body>
